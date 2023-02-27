@@ -6,16 +6,12 @@ import (
 	"log"
 )
 
-var (
-	node     *maelstrom.Node
-	topology []string
-)
-
 func main() {
-	topology = make([]string, 0)
+	observed := make(map[any]bool)
+	topology := make([]string, 0)
 	state := make([]any, 0)
 
-	node = maelstrom.NewNode()
+	node := maelstrom.NewNode()
 	node.Handle("broadcast", func(msg maelstrom.Message) error {
 		var body map[string]any
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
@@ -24,6 +20,22 @@ func main() {
 
 		if len(topology) == 0 {
 			topology = node.NodeIDs()
+		}
+
+		message := body["message"]
+		if _, ok := observed[message]; ok {
+			// Observed the message already
+			return nil
+		}
+
+		observed[message] = true
+
+		for _, n := range topology {
+			if msg.Src == n {
+				continue
+			}
+
+			node.Send(n, body)
 		}
 
 		state = append(state, body["message"])
