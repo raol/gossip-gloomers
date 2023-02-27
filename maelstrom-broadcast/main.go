@@ -22,6 +22,10 @@ func main() {
 			return err
 		}
 
+		if len(topology) == 0 {
+			topology = node.NodeIDs()
+		}
+
 		state = append(state, body["message"])
 
 		body["type"] = "broadcast_ok"
