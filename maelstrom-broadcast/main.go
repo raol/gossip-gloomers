@@ -35,7 +35,7 @@ func main() {
 				continue
 			}
 
-			node.Send(n, body)
+			go send(node, n, body)
 		}
 
 		state = append(state, body["message"])
@@ -76,5 +76,14 @@ func main() {
 
 	if err := node.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func send(from *maelstrom.Node, dest string, message any) {
+	for {
+		if err := from.Send(dest, message); err != nil {
+			continue
+		}
+		break
 	}
 }
