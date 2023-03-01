@@ -29,16 +29,15 @@ func main() {
 		}
 
 		observed[message] = true
+		state = append(state, body["message"])
 
 		for _, n := range topology {
 			if msg.Src == n {
 				continue
 			}
 
-			go send(node, n, body)
+			send(node, n, body)
 		}
-
-		state = append(state, body["message"])
 
 		body["type"] = "broadcast_ok"
 		delete(body, "message")
