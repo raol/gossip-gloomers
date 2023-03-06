@@ -1,2 +1,4 @@
+github.com/antigloss/go v1.19.2 h1:iFcVUX8YAG/lS5h39rEBuiR7icHUSSpn1LDJ6T6E9tY=
+github.com/antigloss/go v1.19.2/go.mod h1:SB8cGslEq8zB5ol+67vrWPltvkwTzr62iS3XTUZUcJQ=
 github.com/jepsen-io/maelstrom/demo/go v0.0.0-20230113211434-22f433519054 h1:NF9yM6z/+jj+LpIsv9dBzF3o4IOgVjqg6hkpuxy55mc=
 github.com/jepsen-io/maelstrom/demo/go v0.0.0-20230113211434-22f433519054/go.mod h1:i6aVIs5AIOOaQF1lAisBm7DDeWM1Iopf+26UxjagsCU=

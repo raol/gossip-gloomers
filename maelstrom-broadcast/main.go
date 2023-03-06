@@ -2,17 +2,50 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/antigloss/go/container/concurrent/queue"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
+	"sync"
+	"time"
 )
 
-func main() {
-	observed := make(map[any]bool)
-	topology := make([]string, 0)
-	state := make([]any, 0)
+type state struct {
+	mu     sync.Mutex
+	values []any
+}
 
+type sendMessage struct {
+	dest    string
+	message any
+}
+
+func main() {
+	topology := make([]string, 0)
+	s := &state{values: make([]any, 0)}
+	queue := queue.NewLockfreeQueue[sendMessage]()
+	timer := time.NewTicker(1 * time.Millisecond)
 	node := maelstrom.NewNode()
+
+	go func() {
+		for {
+			<-timer.C
+			for {
+				value, ok := queue.Pop()
+				if !ok {
+					break
+				}
+
+				if err := node.Send(value.dest, value.message); err != nil {
+					queue.Push(value)
+				}
+			}
+		}
+	}()
+
 	node.Handle("broadcast", func(msg maelstrom.Message) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
 		var body map[string]any
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
@@ -23,26 +56,23 @@ func main() {
 		}
 
 		message := body["message"]
-		if _, ok := observed[message]; ok {
-			// Observed the message already
+		if contains(s.values, message) {
 			return nil
 		}
 
-		observed[message] = true
-		state = append(state, body["message"])
+		s.values = append(s.values, body["message"])
 
 		for _, n := range topology {
 			if msg.Src == n {
 				continue
 			}
 
-			send(node, n, body)
+			queue.Push(sendMessage{dest: n, message: body})
 		}
 
-		body["type"] = "broadcast_ok"
-		delete(body, "message")
-
-		return node.Reply(msg, body)
+		return node.Reply(msg, map[string]any{
+			"type": "broadcast_ok",
+		})
 	})
 
 	node.Handle("read", func(msg maelstrom.Message) error {
@@ -51,7 +81,7 @@ func main() {
 			return err
 		}
 		body["type"] = "read_ok"
-		body["messages"] = state
+		body["messages"] = s.values
 
 		return node.Reply(msg, body)
 	})
@@ -78,11 +108,22 @@ func main() {
 	}
 }
 
-func send(from *maelstrom.Node, dest string, message any) {
+func send(node *maelstrom.Node, dest string, body any) {
 	for {
-		if err := from.Send(dest, message); err != nil {
+		if err := node.Send(dest, body); err != nil {
 			continue
 		}
+
 		break
 	}
+}
+
+func contains[A comparable](collection []A, element A) bool {
+	for _, e := range collection {
+		if e == element {
+			return true
+		}
+	}
+
+	return false
 }
