@@ -5,6 +5,7 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
 	"sync"
+	"time"
 )
 
 type state struct {
@@ -20,25 +21,8 @@ type sendMessage struct {
 func main() {
 	topology := make([]string, 0)
 	s := &state{values: make([]any, 0)}
-	c := make(chan sendMessage)
 	node := maelstrom.NewNode()
-
-	defer close(c)
-
-	go func() {
-		for {
-			select {
-			case msg := <-c:
-				err := node.Send(msg.dest, msg.message)
-				if err != nil {
-					go func() {
-						c <- msg
-					}()
-				}
-			}
-		}
-	}()
-
+	
 	node.Handle("broadcast", func(msg maelstrom.Message) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -60,11 +44,11 @@ func main() {
 		s.values = append(s.values, body["message"])
 
 		for _, n := range topology {
-			if msg.Src == n {
+			if msg.Src == n || n == node.ID() {
 				continue
 			}
 
-			c <- sendMessage{dest: n, message: body}
+			go sendWithRetry(node, sendMessage{n, body})
 		}
 
 		return node.Reply(msg, map[string]any{
@@ -102,6 +86,18 @@ func main() {
 
 	if err := node.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func sendWithRetry(node *maelstrom.Node, message sendMessage) {
+	acked := false
+	node.RPC(message.dest, message.message, func(msg maelstrom.Message) error {
+		acked = true
+		return nil
+	})
+	time.Sleep(time.Millisecond * 50)
+	if !acked {
+		sendWithRetry(node, message)
 	}
 }
 
