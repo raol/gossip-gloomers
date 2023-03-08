@@ -2,11 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/antigloss/go/container/concurrent/queue"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
 	"sync"
-	"time"
 )
 
 type state struct {
@@ -22,21 +20,20 @@ type sendMessage struct {
 func main() {
 	topology := make([]string, 0)
 	s := &state{values: make([]any, 0)}
-	queue := queue.NewLockfreeQueue[sendMessage]()
-	timer := time.NewTicker(1 * time.Millisecond)
+	c := make(chan sendMessage)
 	node := maelstrom.NewNode()
+
+	defer close(c)
 
 	go func() {
 		for {
-			<-timer.C
-			for {
-				value, ok := queue.Pop()
-				if !ok {
-					break
-				}
-
-				if err := node.Send(value.dest, value.message); err != nil {
-					queue.Push(value)
+			select {
+			case msg := <-c:
+				err := node.Send(msg.dest, msg.message)
+				if err != nil {
+					go func() {
+						c <- msg
+					}()
 				}
 			}
 		}
@@ -67,7 +64,7 @@ func main() {
 				continue
 			}
 
-			queue.Push(sendMessage{dest: n, message: body})
+			c <- sendMessage{dest: n, message: body}
 		}
 
 		return node.Reply(msg, map[string]any{
@@ -105,16 +102,6 @@ func main() {
 
 	if err := node.Run(); err != nil {
 		log.Fatal(err)
-	}
-}
-
-func send(node *maelstrom.Node, dest string, body any) {
-	for {
-		if err := node.Send(dest, body); err != nil {
-			continue
-		}
-
-		break
 	}
 }
 
