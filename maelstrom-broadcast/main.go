@@ -20,11 +20,6 @@ type gossipState struct {
 	outstanding map[string]map[float64]bool
 }
 
-type sendMessage struct {
-	dest    string
-	message int
-}
-
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	s := &state{
@@ -208,40 +203,6 @@ func nodeGossip(node *maelstrom.Node, dest string, state *gossipState) {
 		log.Printf("Sending to %s timed out", dest)
 		return
 	}
-}
-
-func sendWithRetry(node *maelstrom.Node, message sendMessage) {
-	c := make(chan any)
-
-	go func() {
-		node.RPC(message.dest, message.message, func(msg maelstrom.Message) error {
-			c <- true
-			return nil
-		})
-	}()
-
-	select {
-	case <-c:
-		return
-	case <-time.After(1 * time.Second):
-		sendWithRetry(node, message)
-	}
-
-}
-
-func remove[A comparable](collection []A, element A) []A {
-	index := -1
-	for i, e := range collection {
-		if e == element {
-			index = i
-		}
-	}
-
-	if index == -1 {
-		return collection
-	}
-
-	return append(collection[:index], collection[index+1:]...)
 }
 
 func contains[A comparable](collection []A, element A) bool {
