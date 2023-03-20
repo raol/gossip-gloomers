@@ -4,39 +4,41 @@ import (
 	"encoding/json"
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
 
 type state struct {
 	mu       sync.Mutex
-	values   []any
+	values   []float64
 	topology []string
 }
 
 type gossipState struct {
 	mu          sync.Mutex
-	outstanding map[string][]any
+	outstanding map[string]map[float64]bool
 }
 
 type sendMessage struct {
 	dest    string
-	message any
+	message int
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	s := &state{
-		values:   make([]any, 0),
+		values:   make([]float64, 0),
 		topology: make([]string, 0),
 	}
 
 	gs := &gossipState{
-		outstanding: make(map[string][]any),
+		outstanding: make(map[string]map[float64]bool),
 	}
 
 	node := maelstrom.NewNode()
 
-	timer := time.NewTicker(1 * time.Second)
+	timer := time.NewTicker(100 * time.Millisecond)
 	go func() {
 		for {
 			select {
@@ -57,8 +59,9 @@ func main() {
 		}
 
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		gs.mu.Lock()
+
+		defer s.mu.Unlock()
 		defer gs.mu.Unlock()
 
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
@@ -67,15 +70,15 @@ func main() {
 
 		if gossip, ok := body["message"].([]any); ok {
 			for _, e := range gossip {
-				if !contains(s.values, e) {
-					log.Printf("Processing value %s", e)
-					s.values = append(s.values, e)
-					for k, v := range gs.outstanding {
-						gs.outstanding[k] = append(v, e)
+				value := e.(float64)
+				if !contains(s.values, value) {
+					s.values = append(s.values, value)
+					for _, v := range gs.outstanding {
+						v[value] = false
 					}
 				}
-
 			}
+			sort.Float64s(s.values)
 		} else {
 			log.Printf("Failed to parse gossip body")
 		}
@@ -100,14 +103,15 @@ func main() {
 			s.topology = node.NodeIDs()
 		}
 
-		message := body["message"]
-		if contains(s.values, message) {
+		value := body["message"].(float64)
+		if contains(s.values, value) {
 			return nil
 		}
 
-		s.values = append(s.values, body["message"])
-		for k, v := range gs.outstanding {
-			gs.outstanding[k] = append(v, body["message"])
+		s.values = append(s.values, value)
+		sort.Float64s(s.values)
+		for _, v := range gs.outstanding {
+			v[value] = false
 		}
 
 		return node.Reply(msg, map[string]any{
@@ -116,6 +120,8 @@ func main() {
 	})
 
 	node.Handle("read", func(msg maelstrom.Message) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		var body map[string]any
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
@@ -146,7 +152,7 @@ func main() {
 
 		gs.mu.Lock()
 		for _, n := range s.topology {
-			gs.outstanding[n] = make([]any, 0)
+			gs.outstanding[n] = make(map[float64]bool)
 		}
 		defer gs.mu.Unlock()
 
@@ -162,12 +168,21 @@ func main() {
 
 func nodeGossip(node *maelstrom.Node, dest string, state *gossipState) {
 	state.mu.Lock()
-	values := state.outstanding[dest]
+	values := make([]float64, 0)
+
+	for k, v := range state.outstanding[dest] {
+		if !v {
+			values = append(values, k)
+		}
+	}
+
 	state.mu.Unlock()
 
 	if len(values) == 0 {
 		return
 	}
+
+	log.Printf("Values to be sent to %s are %v", dest, values)
 
 	body := map[string]any{
 		"type":    "gossip",
@@ -186,11 +201,11 @@ func nodeGossip(node *maelstrom.Node, dest string, state *gossipState) {
 	case <-reply:
 		state.mu.Lock()
 		for _, e := range values {
-			state.outstanding[dest] = remove(state.outstanding[dest], e)
+			state.outstanding[dest][e] = true
 		}
 		state.mu.Unlock()
 	case <-time.After(500 * time.Millisecond):
-		// bail out
+		log.Printf("Sending to %s timed out", dest)
 		return
 	}
 }
