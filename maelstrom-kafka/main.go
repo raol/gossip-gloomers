@@ -8,7 +8,7 @@ import (
 
 func main() {
 	node := maelstrom.NewNode()
-	storage := NewStorage()
+	storage := NewStorage(node)
 
 	node.Handle("send", func(msg maelstrom.Message) error {
 		var body map[string]any

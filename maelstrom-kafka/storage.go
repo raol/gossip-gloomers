@@ -1,17 +1,28 @@
 package main
 
-import "sync"
+import (
+	"context"
+	"fmt"
+	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
+	"sync"
+)
+
+const (
+	committedPrefix = "committed_"
+	offsetPrefix    = "offset_"
+	valuePrefix     = "value_"
+)
 
 type Storage struct {
-	logs             map[string][]int
-	committedOffsets map[string]int
-	mu               sync.Mutex
+	logs    map[string][]int
+	storage *maelstrom.KV
+	mu      sync.Mutex
 }
 
-func NewStorage() *Storage {
+func NewStorage(node *maelstrom.Node) *Storage {
 	return &Storage{
-		logs:             map[string][]int{},
-		committedOffsets: map[string]int{},
+		logs:    map[string][]int{},
+		storage: maelstrom.NewLinKV(node),
 	}
 }
 
@@ -23,22 +34,34 @@ func (s *Storage) Append(key string, value int) int {
 		s.logs[key] = make([]int, 0)
 	}
 
-	s.logs[key] = append(s.logs[key], value)
+	offset, err := s.storage.ReadInt(context.Background(), fmt.Sprintf("%s%s", offsetPrefix, key))
+	if err != nil {
+		offset = 0
+	} else {
+		offset += 1
+	}
 
-	return len(s.logs[key]) - 1
+	s.storage.Write(context.Background(), fmt.Sprintf("%s%s", offsetPrefix, key), offset)
+	s.storage.Write(context.Background(), fmt.Sprintf("%s%s_%d", valuePrefix, key, offset), value)
+
+	return offset
 }
 
 func (s *Storage) GetFromOffset(key string, offset int) [][]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.logs[key]; !ok {
-		return make([][]int, 0)
+	result := make([][]int, 0)
+	currentOffset, err := s.storage.ReadInt(context.Background(), fmt.Sprintf("%s%s", offsetPrefix, key))
+	if err != nil {
+		return result
 	}
 
-	result := make([][]int, 0)
-	for i, v := range s.logs[key][offset:] {
-		result = append(result, []int{i + offset, v})
+	for i := offset; i <= currentOffset; i++ {
+		value, err := s.storage.ReadInt(context.Background(), fmt.Sprintf("%s%s_%d", valuePrefix, key, i))
+		if err == nil {
+			result = append(result, []int{i, value})
+		}
 	}
 
 	return result
@@ -47,11 +70,12 @@ func (s *Storage) GetFromOffset(key string, offset int) [][]int {
 func (s *Storage) CommitOffset(key string, offset int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.committedOffsets[key] = offset
+	s.storage.Write(context.Background(), fmt.Sprintf("%s%s", committedPrefix, key), offset)
 }
 
 func (s *Storage) GetCommittedOffset(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.committedOffsets[key]
+	i, _ := s.storage.ReadInt(context.Background(), fmt.Sprintf("%s%s", committedPrefix, key))
+	return i
 }
