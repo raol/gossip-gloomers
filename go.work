@@ -6,4 +6,5 @@ use (
 	./maelstrom-echo
 	./maelstrom-kafka
 	./maelstrom-unique-ids
+	maelstrom-txn
 )
